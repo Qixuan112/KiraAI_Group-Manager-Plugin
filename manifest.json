@@ -3,6 +3,6 @@
     "name": "群聊管理插件",
     "version": "1.0.0",
     "description": "提供群聊管理功能，包括禁言、踢人、设置名片等（踢人和全员禁言为可选功能）",
-    "author": "KiraAI",
+    "author": "nyx",
     "entry_point": "main.py"
 }
