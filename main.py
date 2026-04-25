@@ -1,14 +1,12 @@
-"""
-群聊管理插件 - Group Manager Plugin
+"""群聊管理插件 - Group Manager Plugin
 
 提供群聊管理功能，包括：
 - 核心功能：禁言/解除禁言、设置名片、撤回消息、查询成员
 - 可选功能：踢人、全员禁言（需手动开启）
 
 安全机制：
-- 只有配置的管理员QQ可以使用群管功能
-- Bot需要是群管理员才能执行操作
-- 所有操作记录日志
+- 配置 allow_ai_autonomous 为 true 时，所有工具调用直接放行（AI 自主执行）
+- 为 false 时，仅管理员列表中的用户和机器人自身可执行
 """
 
 from core.plugin import BasePlugin, logger, on, Priority, register
@@ -20,7 +18,6 @@ from typing import Optional
 
 # ============ 常量定义 ============
 
-# 工具使用提示（注入给AI）
 TOOLS_PROMPT_TEMPLATE = """\
 ## 群聊管理工具使用说明
 
@@ -40,7 +37,6 @@ TOOLS_PROMPT_TEMPLATE = """\
 - 用户："修改我的群名片为xxx" → 使用 group_set_card
 """
 
-# 核心工具描述
 CORE_TOOLS_DESC = """
 - group_ban_user: 禁言指定群成员。参数：user_id(QQ号), duration(秒，默认600)
 - group_unban_user: 解除指定群成员的禁言。参数：user_id(QQ号)
@@ -50,7 +46,6 @@ CORE_TOOLS_DESC = """
 - group_get_member_info: 获取指定成员详细信息。参数：user_id(QQ号)
 """
 
-# 可选工具描述
 OPTIONAL_TOOLS_DESC = {
     "kick": "- group_kick_user: 【高危】踢出群成员。参数：user_id(QQ号), reject_add_request(是否拒绝加群申请，默认false)",
     "whole_ban": "- group_whole_ban: 【高危】全员禁言/解除全员禁言。参数：enable(true/false)"
@@ -64,84 +59,75 @@ class GroupManagerPlugin(BasePlugin):
     
     def __init__(self, ctx, cfg: dict):
         super().__init__(ctx, cfg)
-        self.admin_list: list = cfg.get("admin_qq_list", [])
-        self.enable_kick: bool = cfg.get("enable_kick_user", False)
-        self.enable_whole_ban: bool = cfg.get("enable_whole_ban", False)
-        self.auto_check_admin: bool = cfg.get("auto_check_admin", True)
-        self.log_operations: bool = cfg.get("log_operations", True)
+        # 管理员列表
+        raw_admin_list = cfg.get("admin_qq_list", [])
+        self.admin_list = [str(uid) for uid in raw_admin_list if uid]
+        self.enable_kick = cfg.get("enable_kick_user", False)
+        self.enable_whole_ban = cfg.get("enable_whole_ban", False)
+        self.auto_check_admin = cfg.get("auto_check_admin", True)
+        self.log_operations = cfg.get("log_operations", True)
+        # 新增：允许 AI 自主执行（跳过权限检查）
+        self.allow_ai_autonomous = cfg.get("allow_ai_autonomous", True)
         
     async def initialize(self):
-        """插件初始化"""
         logger.info(f"[GroupManager] 群聊管理插件已加载")
         logger.info(f"[GroupManager] 管理员列表: {self.admin_list}")
         logger.info(f"[GroupManager] 踢人功能: {'已启用' if self.enable_kick else '已禁用'}")
         logger.info(f"[GroupManager] 全员禁言功能: {'已启用' if self.enable_whole_ban else '已禁用'}")
+        logger.info(f"[GroupManager] AI自主执行模式: {'开启' if self.allow_ai_autonomous else '关闭'}")
     
     async def terminate(self):
-        """插件卸载清理"""
         logger.info("[GroupManager] 群聊管理插件已卸载")
     
     # ============ 权限验证 ============
     
     def _is_admin(self, event: KiraMessageBatchEvent) -> bool:
         """
-        检查发送者是否为管理员
-        
-        Args:
-            event: 消息事件对象 (KiraMessageBatchEvent)
-            
-        Returns:
-            bool: 是否为管理员
+        检查操作者是否为管理员
+        如果 allow_ai_autonomous 为 True，直接放行所有调用
+        否则按照原有逻辑检查
         """
-        # 从 messages 列表获取最后一条消息的发送者
-        if not event.messages:
-            logger.warning("[GroupManager] _is_admin: event.messages 为空")
-            return False
-            
-        last_message = event.messages[-1]
-        sender_qq = str(last_message.sender.user_id)
-        self_qq = str(last_message.self_id)
-        
-        logger.debug(f"[GroupManager] _is_admin: 发送者={sender_qq}, Bot={self_qq}, 管理员列表={self.admin_list}")
-        
-        # Bot自己自动拥有权限
-        if sender_qq == self_qq:
-            logger.debug("[GroupManager] _is_admin: Bot自己，允许")
+        if self.allow_ai_autonomous:
+            logger.debug("[GroupManager] AI自主执行模式已开启，直接放行")
             return True
-            
-        # 检查是否在管理员列表
-        is_admin = sender_qq in self.admin_list
-        logger.debug(f"[GroupManager] _is_admin: 发送者是否在列表中={is_admin}")
-        return is_admin
+        
+        # 以下为原有权限检查逻辑（当自主模式关闭时生效）
+        if not event.messages:
+            logger.warning("[GroupManager] event.messages 为空，拒绝")
+            return False
+        
+        last_message = event.messages[-1]
+        sender_qq = str(last_message.sender.user_id) if last_message.sender else None
+        self_qq = str(last_message.self_id) if hasattr(last_message, 'self_id') else None
+        
+        logger.debug(f"[GroupManager] 权限检查: 发送者={sender_qq}, Bot={self_qq}, 管理员列表={self.admin_list}")
+        
+        # 发送者是机器人自身
+        if self_qq and sender_qq == self_qq:
+            logger.debug("[GroupManager] 机器人自身，允许")
+            return True
+        
+        # 系统消息（提醒插件等）
+        if sender_qq in ("system", "unknown", "", "None"):
+            logger.debug("[GroupManager] 系统消息，允许")
+            return True
+        
+        # 发送者在管理员列表中
+        if sender_qq in self.admin_list:
+            logger.debug("[GroupManager] 发送者在管理员列表中，允许")
+            return True
+        
+        logger.debug("[GroupManager] 权限不足，拒绝")
+        return False
     
     def _log_operation(self, operation: str, operator: str, target: str = "", result: str = ""):
-        """
-        记录操作日志
-        
-        Args:
-            operation: 操作名称
-            operator: 操作者QQ
-            target: 目标QQ（可选）
-            result: 操作结果
-        """
         if not self.log_operations:
             return
-        
         target_str = f", 目标: {target}" if target else ""
         logger.info(f"[GroupManager] {operation} | 操作者: {operator}{target_str} | 结果: {result}")
     
     def _get_qq_client(self, event: KiraMessageBatchEvent):
-        """
-        获取QQ适配器的NapCat客户端
-        
-        Args:
-            event: 消息事件，用于获取适配器名称
-            
-        Returns:
-            NapCatWebSocketClient 或 None
-        """
         try:
-            # 从事件中获取适配器名称
             adapter_name = event.adapter.name if event.adapter else "qq"
             adapter = self.ctx.adapter_mgr.get_adapter(adapter_name)
             if not adapter:
@@ -156,25 +142,16 @@ class GroupManagerPlugin(BasePlugin):
     
     @on.llm_request(priority=Priority.MEDIUM)
     async def inject_tools_prompt(self, event: KiraMessageBatchEvent, req: LLMRequest, *_):
-        """
-        向AI注入群管工具使用说明
-        """
-        # 只在群聊中注入提示
         if not event.is_group_message():
             return
         
-        # 构建工具列表描述
         tools_list = CORE_TOOLS_DESC
-        
         if self.enable_kick:
             tools_list += "\n" + OPTIONAL_TOOLS_DESC["kick"]
-        
         if self.enable_whole_ban:
             tools_list += "\n" + OPTIONAL_TOOLS_DESC["whole_ban"]
         
         prompt_content = TOOLS_PROMPT_TEMPLATE.format(tools_list=tools_list)
-        
-        # 添加到系统提示
         req.system_prompt.append(Prompt(
             name="group_manager_tools",
             content=prompt_content
@@ -195,25 +172,11 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def ban_user(self, event: KiraMessageBatchEvent, user_id: str, duration: int = 600) -> str:
-        """
-        禁言指定用户
-        
-        Args:
-            event: 消息事件
-            user_id: 目标QQ号
-            duration: 禁言秒数
-            
-        Returns:
-            操作结果字符串
-        """
-        # 权限检查
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
-        # 获取QQ客户端
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
@@ -224,7 +187,6 @@ class GroupManagerPlugin(BasePlugin):
                 "user_id": user_id,
                 "duration": duration
             })
-            
             if result.get("status") == "ok":
                 duration_min = duration // 60
                 self._log_operation("禁言", operator, user_id, f"成功，时长{duration_min}分钟")
@@ -233,7 +195,6 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("禁言", operator, user_id, f"失败: {err_msg}")
                 return f"❌ 禁言失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 禁言操作异常: {e}")
             return f"❌ 禁言操作异常: {str(e)}"
@@ -250,22 +211,11 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def unban_user(self, event: KiraMessageBatchEvent, user_id: str) -> str:
-        """
-        解除用户禁言
-        
-        Args:
-            event: 消息事件
-            user_id: 目标QQ号
-            
-        Returns:
-            操作结果字符串
-        """
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
@@ -274,9 +224,8 @@ class GroupManagerPlugin(BasePlugin):
             result = await client.send_action("set_group_ban", {
                 "group_id": group_id,
                 "user_id": user_id,
-                "duration": 0  # 0表示解除禁言
+                "duration": 0
             })
-            
             if result.get("status") == "ok":
                 self._log_operation("解除禁言", operator, user_id, "成功")
                 return f"✅ 已解除用户 {user_id} 的禁言"
@@ -284,7 +233,6 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("解除禁言", operator, user_id, f"失败: {err_msg}")
                 return f"❌ 解除禁言失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 解除禁言异常: {e}")
             return f"❌ 解除禁言异常: {str(e)}"
@@ -304,23 +252,11 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def set_card(self, event: KiraMessageBatchEvent, user_id: str, card: str) -> str:
-        """
-        设置群名片
-        
-        Args:
-            event: 消息事件
-            user_id: 目标QQ号
-            card: 新名片
-            
-        Returns:
-            操作结果字符串
-        """
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
@@ -331,7 +267,6 @@ class GroupManagerPlugin(BasePlugin):
                 "user_id": user_id,
                 "card": card
             })
-            
             if result.get("status") == "ok":
                 card_display = card if card else "(取消名片)"
                 self._log_operation("设置名片", operator, user_id, f"成功: {card_display}")
@@ -340,7 +275,6 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("设置名片", operator, user_id, f"失败: {err_msg}")
                 return f"❌ 设置名片失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 设置名片异常: {e}")
             return f"❌ 设置名片异常: {str(e)}"
@@ -359,30 +293,16 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def delete_msg(self, event: KiraMessageBatchEvent, message_id: str) -> str:
-        """
-        撤回消息
-        
-        Args:
-            event: 消息事件
-            message_id: 消息ID
-            
-        Returns:
-            操作结果字符串
-        """
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
-        
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
         
         try:
-            result = await client.send_action("delete_msg", {
-                "message_id": message_id
-            })
-            
+            result = await client.send_action("delete_msg", {"message_id": message_id})
             if result.get("status") == "ok":
                 self._log_operation("撤回消息", operator, "", f"成功, 消息ID: {message_id}")
                 return f"✅ 已撤回消息 (ID: {message_id})"
@@ -390,7 +310,6 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("撤回消息", operator, "", f"失败: {err_msg}")
                 return f"❌ 撤回消息失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 撤回消息异常: {e}")
             return f"❌ 撤回消息异常: {str(e)}"
@@ -400,41 +319,23 @@ class GroupManagerPlugin(BasePlugin):
     @register.tool(
         name="group_get_member_list",
         description="【需要管理员权限】获取群成员列表（简要信息）",
-        params={
-            "type": "object",
-            "properties": {}
-        }
+        params={"type": "object", "properties": {}}
     )
     async def get_member_list(self, event: KiraMessageBatchEvent) -> str:
-        """
-        获取群成员列表
-        
-        Args:
-            event: 消息事件
-            
-        Returns:
-            成员列表字符串
-        """
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
         
         try:
-            result = await client.send_action("get_group_member_list", {
-                "group_id": group_id
-            })
-            
+            result = await client.send_action("get_group_member_list", {"group_id": group_id})
             if result.get("status") == "ok":
                 members = result.get("data", [])
                 total = len(members)
-                
-                # 只展示前10个成员作为示例
                 member_preview = []
                 for m in members[:10]:
                     user_id = m.get("user_id", "")
@@ -442,17 +343,14 @@ class GroupManagerPlugin(BasePlugin):
                     card = m.get("card", "")
                     display = f"{card}({user_id})" if card else f"{nickname}({user_id})"
                     member_preview.append(display)
-                
                 preview_str = "\n".join(member_preview)
                 more_str = f"\n... 等共 {total} 人" if total > 10 else ""
-                
                 self._log_operation("获取成员列表", operator, "", f"成功, 共{total}人")
                 return f"📋 群成员列表（共{total}人）：\n{preview_str}{more_str}"
             else:
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("获取成员列表", operator, "", f"失败: {err_msg}")
                 return f"❌ 获取成员列表失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 获取成员列表异常: {e}")
             return f"❌ 获取成员列表异常: {str(e)}"
@@ -469,22 +367,11 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def get_member_info(self, event: KiraMessageBatchEvent, user_id: str) -> str:
-        """
-        获取群成员详细信息
-        
-        Args:
-            event: 消息事件
-            user_id: 目标QQ号
-            
-        Returns:
-            成员详细信息字符串
-        """
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
@@ -494,10 +381,8 @@ class GroupManagerPlugin(BasePlugin):
                 "group_id": group_id,
                 "user_id": user_id
             })
-            
             if result.get("status") == "ok":
                 data = result.get("data", {})
-                
                 info_lines = [
                     f"📋 成员信息：",
                     f"QQ号: {data.get('user_id', 'N/A')}",
@@ -508,17 +393,12 @@ class GroupManagerPlugin(BasePlugin):
                     f"入群时间: {self._format_time(data.get('join_time', 0))}",
                     f"最后发言: {self._format_time(data.get('last_sent_time', 0))}",
                 ]
-                
-                # 角色转换
                 role = data.get('role', 'member')
                 role_map = {'owner': '群主', 'admin': '管理员', 'member': '普通成员'}
                 info_lines.append(f"身份: {role_map.get(role, role)}")
-                
-                # 禁言状态
                 shut_up_timestamp = data.get('shut_up_timestamp', 0)
                 if shut_up_timestamp > 0:
                     info_lines.append("⛔ 当前处于禁言状态")
-                
                 info_str = "\n".join(info_lines)
                 self._log_operation("获取成员信息", operator, user_id, "成功")
                 return info_str
@@ -526,7 +406,6 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("获取成员信息", operator, user_id, f"失败: {err_msg}")
                 return f"❌ 获取成员信息失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 获取成员信息异常: {e}")
             return f"❌ 获取成员信息异常: {str(e)}"
@@ -546,27 +425,13 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def kick_user(self, event: KiraMessageBatchEvent, user_id: str, reject_add_request: bool = False) -> str:
-        """
-        踢出群成员（可选功能）
-        
-        Args:
-            event: 消息事件
-            user_id: 目标QQ号
-            reject_add_request: 是否拒绝加群申请
-            
-        Returns:
-            操作结果字符串
-        """
-        # 检查功能是否启用
         if not self.enable_kick:
             return "❌ 踢人功能未启用，请在插件配置中开启"
-        
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
@@ -577,7 +442,6 @@ class GroupManagerPlugin(BasePlugin):
                 "user_id": user_id,
                 "reject_add_request": reject_add_request
             })
-            
             if result.get("status") == "ok":
                 reject_str = "，已拒绝加群申请" if reject_add_request else ""
                 self._log_operation("踢出成员【高危】", operator, user_id, f"成功{reject_str}")
@@ -586,7 +450,6 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation("踢出成员", operator, user_id, f"失败: {err_msg}")
                 return f"❌ 踢出成员失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 踢出成员异常: {e}")
             return f"❌ 踢出成员异常: {str(e)}"
@@ -605,26 +468,13 @@ class GroupManagerPlugin(BasePlugin):
         }
     )
     async def whole_ban(self, event: KiraMessageBatchEvent, enable: bool) -> str:
-        """
-        全员禁言（可选功能）
-        
-        Args:
-            event: 消息事件
-            enable: 是否开启全员禁言
-            
-        Returns:
-            操作结果字符串
-        """
-        # 检查功能是否启用
         if not self.enable_whole_ban:
             return "❌ 全员禁言功能未启用，请在插件配置中开启"
-        
         if not self._is_admin(event):
             return "❌ 用户不是插件的管理员"
         
-        operator = str(event.messages[-1].sender.user_id)
+        operator = str(event.messages[-1].sender.user_id) if event.messages else "系统"
         group_id = event.session.session_id
-        
         client = self._get_qq_client(event)
         if not client:
             return "❌ 无法连接到QQ客户端"
@@ -634,7 +484,6 @@ class GroupManagerPlugin(BasePlugin):
                 "group_id": group_id,
                 "enable": enable
             })
-            
             if result.get("status") == "ok":
                 action_str = "开启" if enable else "关闭"
                 self._log_operation(f"{action_str}全员禁言【高危】", operator, "", "成功")
@@ -643,24 +492,14 @@ class GroupManagerPlugin(BasePlugin):
                 err_msg = result.get("message", "未知错误")
                 self._log_operation(f"全员禁言操作", operator, "", f"失败: {err_msg}")
                 return f"❌ 全员禁言操作失败: {err_msg}"
-                
         except Exception as e:
             logger.error(f"[GroupManager] 全员禁言异常: {e}")
             return f"❌ 全员禁言异常: {str(e)}"
     
-    # ============ 工具方法 ============
+    # ============ 辅助方法 ============
     
     @staticmethod
     def _format_time(timestamp: int) -> str:
-        """
-        格式化时间戳
-        
-        Args:
-            timestamp: Unix时间戳
-            
-        Returns:
-            格式化后的时间字符串
-        """
         if not timestamp:
             return "N/A"
         try:

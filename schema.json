@@ -3,19 +3,25 @@
     "name": "管理员QQ列表",
     "type": "list",
     "default": [],
-    "hint": "管理员QQ号列表，只有这些用户可以使用群管功能"
+    "hint": "管理员QQ号列表（当 allow_ai_autonomous 为 false 时生效）"
+  },
+  "allow_ai_autonomous": {
+    "name": "允许 AI 自主执行",
+    "type": "switch",
+    "default": true,
+    "hint": "开启后，AI 发起的任何群管操作都将直接执行（不检查调用者身份），请谨慎使用。建议配合提示词约束普通用户命令。"
   },
   "enable_kick_user": {
     "name": "启用踢人功能",
     "type": "switch",
     "default": false,
-    "hint": "【高危】是否允许踢出群成员，默认关闭"
+    "hint": "【高危】是否允许踢出群成员"
   },
   "enable_whole_ban": {
     "name": "启用全员禁言",
     "type": "switch",
     "default": false,
-    "hint": "【高危】是否允许全员禁言，默认关闭"
+    "hint": "【高危】是否允许全员禁言"
   },
   "auto_check_admin": {
     "name": "自动检查管理员",
