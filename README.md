@@ -167,7 +167,7 @@ notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没
 | `group_set_special_title` | 设置专属头衔 | 见“管理员验证” + 配置开启 + Bot需为群主（仅管理员会失败） |
 | `group_check_join_requests` | 查看待处理加群申请 | 见“管理员验证” + 配置开启 |
 | `group_handle_join_request` | 审批加群申请 | 见“管理员验证” + 配置开启 |
-| `group_ask_master` | 私聊请示主人 | 配置 master_qq |
+| `group_ask_master` | 私聊请示主人 | 见“管理员验证” + 配置 master_qq |
 
 ## 安全设计
 
