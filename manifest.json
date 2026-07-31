@@ -1,8 +1,8 @@
 {
     "plugin_id": "group_manager",
     "display_name": "群聊管理插件",
-    "version": "1.1.0",
-    "description": "提供群聊管理功能，包括禁言、踢人、设置名片等（踢人和全员禁言为可选功能）",
+    "version": "1.2.0",
+    "description": "提供群聊管理功能，包括禁言、踢人、设置名片、群公告、精华消息、专属头衔等（高危与新功能均为可选开关，可与 group_member_viewer 共存）",
     "author": "nyx+znq19",
     "repo":"https://github.com/Qixuan112/KiraAI_Group-Manager-Plugin"
 }
