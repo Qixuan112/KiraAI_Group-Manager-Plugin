@@ -1,38 +1,154 @@
 {
-  "admin_qq_list": {
-    "name": "管理员QQ列表",
-    "type": "list",
-    "default": [],
-    "hint": "管理员QQ号列表（当 allow_ai_autonomous 为 false 时生效）"
+  "section_admin": {
+    "type": "section",
+    "name": "权限与日志",
+    "collapsed": false,
+    "fields": {
+      "admin_qq_list": {
+        "name": "管理员QQ列表",
+        "type": "list",
+        "default": [],
+        "hint": "管理员QQ号列表（当 allow_ai_autonomous 为 false 时生效）"
+      },
+      "allow_ai_autonomous": {
+        "name": "允许 AI 自主执行",
+        "type": "switch",
+        "default": true,
+        "hint": "开启后，AI 发起的任何群管操作都将直接执行（不检查调用者身份），请谨慎使用。建议配合提示词约束普通用户命令。"
+      },
+      "auto_check_admin": {
+        "name": "自动检查Bot管理权限",
+        "type": "switch",
+        "default": true,
+        "hint": "插件启动后自动检查 Bot 在各群是否为管理员，不是则在日志中提醒（群管操作失败的常见原因）"
+      },
+      "log_operations": {
+        "name": "记录操作日志",
+        "type": "switch",
+        "default": true,
+        "hint": "是否记录群管操作日志"
+      }
+    }
   },
-  "allow_ai_autonomous": {
-    "name": "允许 AI 自主执行",
-    "type": "switch",
-    "default": true,
-    "hint": "开启后，AI 发起的任何群管操作都将直接执行（不检查调用者身份），请谨慎使用。建议配合提示词约束普通用户命令。"
+  "section_danger": {
+    "type": "section",
+    "name": "高危功能",
+    "collapsed": true,
+    "fields": {
+      "enable_kick_user": {
+        "name": "启用踢人功能",
+        "type": "switch",
+        "default": false,
+        "hint": "【高危】是否允许踢出群成员"
+      },
+      "enable_whole_ban": {
+        "name": "启用全员禁言",
+        "type": "switch",
+        "default": false,
+        "hint": "【高危】是否允许全员禁言"
+      }
+    }
   },
-  "enable_kick_user": {
-    "name": "启用踢人功能",
-    "type": "switch",
-    "default": false,
-    "hint": "【高危】是否允许踢出群成员"
+  "section_notice": {
+    "type": "section",
+    "name": "群公告",
+    "collapsed": true,
+    "fields": {
+      "enable_group_notice": {
+        "type": "switch",
+        "name": "启用群公告功能",
+        "default": false,
+        "hint": "允许 Bot 发布/读取群公告（编辑公告=读旧公告后发布新版），Bot 需为群管理员"
+      }
+    }
   },
-  "enable_whole_ban": {
-    "name": "启用全员禁言",
-    "type": "switch",
-    "default": false,
-    "hint": "【高危】是否允许全员禁言"
+  "section_essence": {
+    "type": "section",
+    "name": "精华消息",
+    "collapsed": true,
+    "fields": {
+      "enable_essence": {
+        "type": "switch",
+        "name": "启用精华消息功能",
+        "default": false,
+        "hint": "允许 Bot 设置/取消/查看群精华消息，Bot 需为群管理员"
+      }
+    }
   },
-  "auto_check_admin": {
-    "name": "自动检查管理员",
-    "type": "switch",
-    "default": true,
-    "hint": "是否自动检查Bot是否为群管理员"
+  "section_title": {
+    "type": "section",
+    "name": "专属头衔",
+    "collapsed": true,
+    "fields": {
+      "enable_special_title": {
+        "type": "switch",
+        "name": "启用专属头衔功能",
+        "default": false,
+        "hint": "允许 Bot 给群成员设置专属头衔。注意：QQ 限制只有【群主】才能设置专属头衔，如果 Bot 只是群管理员（非群主），请勿开启本功能，调用会失败"
+      },
+      "show_title_in_query": {
+        "type": "switch",
+        "name": "查询结果中显示头衔",
+        "default": true,
+        "hint": "在成员查询结果（get_member_list/get_member_info）中展示成员的专属头衔（🏷️）"
+      }
+    }
   },
-  "log_operations": {
-    "name": "记录操作日志",
-    "type": "switch",
-    "default": true,
-    "hint": "是否记录群管操作日志"
+  "section_presence": {
+    "type": "section",
+    "name": "成员变动感知",
+    "collapsed": true,
+    "fields": {
+      "enable_leave_notice": {
+        "type": "switch",
+        "name": "退群感知",
+        "default": false,
+        "hint": "让 Bot 感知谁退出/被踢出了群聊（注入到对话环境，不主动发言）"
+      },
+      "enable_welcome": {
+        "type": "switch",
+        "name": "新人入群欢迎",
+        "default": false,
+        "hint": "新成员入群时 Bot 自动发送欢迎语（与加群审批功能相互独立）"
+      },
+      "welcome_template": {
+        "type": "textarea",
+        "name": "欢迎语模板",
+        "default": "欢迎 {nickname} 加入本群～",
+        "hint": "可用占位符：{nickname} 新成员昵称、{user_id} 新成员QQ号"
+      }
+    }
+  },
+  "section_join_request": {
+    "type": "section",
+    "name": "加群申请处理",
+    "collapsed": true,
+    "fields": {
+      "enable_join_request": {
+        "type": "switch",
+        "name": "启用加群申请处理",
+        "default": false,
+        "hint": "通过定时查询群系统消息让 Bot 感知并审批加群申请（依赖 NapCat 的 get_group_system_msg），Bot 需为群管理员"
+      },
+      "join_poll_interval": {
+        "type": "integer",
+        "name": "轮询间隔（分钟）",
+        "default": 10,
+        "hint": "多久查询一次待处理申请。纯API查询，不消耗LLM额度、不阻塞消息；0=关闭轮询（仍可用工具主动查）"
+      },
+      "join_request_mode": {
+        "type": "enum",
+        "name": "处理模式",
+        "options": ["ask_master", "auto", "notify_only"],
+        "default": "ask_master",
+        "hint": "ask_master=Bot有把握就批、拿不准私聊问主人；auto=Bot全权自行审批；notify_only=只私聊通知主人不自动处理"
+      },
+      "master_qq": {
+        "type": "string",
+        "name": "主人QQ号",
+        "default": "",
+        "hint": "Bot 拿不准时私聊请示的对象（ask_master/notify_only 模式必填）"
+      }
+    }
   }
 }

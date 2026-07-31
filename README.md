@@ -1,7 +1,7 @@
 
 # 群聊管理插件 (Group Manager Plugin)
 
-为 KiraAI 提供群聊管理功能，支持禁言、踢人、设置名片等操作。
+为 KiraAI 提供群聊管理功能，支持禁言、踢人、设置名片、群公告、精华消息、专属头衔、加群申请审批、成员变动感知等。
 
 ## 功能特性
 
@@ -12,9 +12,17 @@
 - ✅ **查询成员列表** - 查看群成员简要信息
 - ✅ **查询成员信息** - 查看指定成员的详细信息
 
-### 可选功能（需手动开启）
+### 可选功能（需手动开启，均为独立开关）
 - ⚠️ **踢出成员** - 将成员踢出群聊
 - ⚠️ **全员禁言** - 开启/关闭全员禁言
+- 📢 **群公告** - 发布/读取群公告（编辑公告=读旧公告后发布新版）
+- ⭐ **精华消息** - 设置/取消/查看群精华消息
+- 🏷️ **专属头衔** - 给群成员设置专属头衔（Bot 需为群主）
+- 📥 **加群申请处理** - 定时轮询 + 主动查询待处理申请，Bot 可审批或私聊请示主人
+- 👋 **成员变动感知** - 退群感知（注入对话环境）与新人入群欢迎（默认关闭）
+
+> 成员查询增强：推荐搭配独立插件 **group_member_viewer**（群概览/关键词查找/成员详情）。
+> 两插件可同时安装：检测到 viewer 时本插件会自动卸载自带的两个查询工具，避免重复。
 
 ## 安装
 
@@ -26,25 +34,54 @@
 
 配置文件位置：`data/config/plugins/group_manager.json`
 
-```json
-{
-    "admin_qq_list": ["123456789", "987654321"],
-    "allow_ai_autonomous": true,
-    "enable_kick_user": false,
-    "enable_whole_ban": false,
-    "auto_check_admin": true,
-    "log_operations": true
-}
-```
+v1.2.0 起配置按分组管理（WebUI 中按分组展示）。旧版平铺配置键仍被兼容读取：
+**新分组配置优先；仅当新键保持默认值且旧键被改过时才沿用旧值**（日志会提醒迁移）。
+
+### 权限与日志（section_admin）
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `admin_qq_list` | 数组 | [] | **管理员QQ号列表**，只有这些用户可以使用群管功能（当 `allow_ai_autonomous` 为 `false` 时生效） |
 | `allow_ai_autonomous` | 布尔 | true | **允许 AI 自主执行**：开启后，AI 自行决定发起的群管操作（如自动禁言违规用户）将跳过调用者身份检查，直接执行。关闭时，仅允许 `admin_qq_list` 中的用户命令执行 |
+| `auto_check_admin` | 布尔 | true | 启动后自动检查 Bot 在各群是否为管理员，不是则日志提醒 |
+| `log_operations` | 布尔 | true | 是否记录群管操作日志 |
+
+### 高危功能（section_danger）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
 | `enable_kick_user` | 布尔 | false | 是否启用踢人功能（高危） |
 | `enable_whole_ban` | 布尔 | false | 是否启用全员禁言功能（高危） |
-| `auto_check_admin` | 布尔 | true | 是否自动检查Bot是否为群管理员 |
-| `log_operations` | 布尔 | true | 是否记录群管操作日志 |
+
+### 群公告 / 精华消息 / 专属头衔（section_notice / section_essence / section_title）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enable_group_notice` | 布尔 | false | 启用群公告发布/读取 |
+| `enable_essence` | 布尔 | false | 启用精华消息设置/取消/查看 |
+| `enable_special_title` | 布尔 | false | 启用专属头衔设置。⚠️ QQ 限制仅**群主**可设置头衔，Bot 只是管理员时请勿开启 |
+| `show_title_in_query` | 布尔 | true | 在成员查询结果中展示专属头衔（🏷️） |
+
+### 成员变动感知（section_presence）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enable_leave_notice` | 布尔 | false | 退群感知：谁退了/被踢了会注入 Bot 的对话环境 |
+| `enable_welcome` | 布尔 | false | 新人入群时自动发欢迎语 |
+| `welcome_template` | 文本 | `欢迎 {nickname} 加入本群～` | 欢迎语模板，占位符 `{nickname}` / `{user_id}` |
+
+### 加群申请处理（section_join_request）
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `enable_join_request` | 布尔 | false | 启用加群申请处理（依赖 NapCat `get_group_system_msg`） |
+| `join_poll_interval` | 整数 | 10 | 轮询间隔（分钟）。纯 API 查询，不消耗 LLM 额度、不阻塞消息；0=关闭轮询 |
+| `join_request_mode` | 枚举 | ask_master | `ask_master`=有把握就批、拿不准私聊问主人；`auto`=Bot 全权审批；`notify_only`=只私聊通知主人 |
+| `master_qq` | 字符串 | "" | 主人 QQ 号（ask_master / notify_only 模式必填） |
+
+工作原理：插件按间隔调用 `get_group_system_msg` 查询待处理申请（含被腾讯风控过滤的申请），
+发现新申请后按模式分发——ask_master/auto 会触发 Bot 在群内决策（Bot 能看到申请人和验证消息），
+notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没有人要加群"主动查询。
 
 ## 使用方法
 
@@ -121,6 +158,16 @@
 | `group_get_member_info` | 获取成员信息 | 见“管理员验证” |
 | `group_kick_user` | 踢出成员 | 见“管理员验证” + 配置开启 |
 | `group_whole_ban` | 全员禁言 | 见“管理员验证” + 配置开启 |
+| `group_send_notice` | 发布群公告 | 见“管理员验证” + 配置开启 |
+| `group_get_notice` | 读取群公告（含 notice_id） | 见“管理员验证” + 配置开启 |
+| `group_delete_notice` | 删除群公告（NapCat 扩展接口） | 见“管理员验证” + 配置开启 |
+| `group_set_essence` | 设置精华消息 | 见“管理员验证” + 配置开启 |
+| `group_unset_essence` | 取消精华消息 | 见“管理员验证” + 配置开启 |
+| `group_list_essence` | 查看精华列表 | 见“管理员验证” + 配置开启 |
+| `group_set_special_title` | 设置专属头衔 | 见“管理员验证” + 配置开启 + Bot需为群主（仅管理员会失败） |
+| `group_check_join_requests` | 查看待处理加群申请 | 见“管理员验证” + 配置开启 |
+| `group_handle_join_request` | 审批加群申请 | 见“管理员验证” + 配置开启 |
+| `group_ask_master` | 私聊请示主人 | 配置 master_qq |
 
 ## 安全设计
 
@@ -149,8 +196,26 @@
 
 ## 更新日志
 
-- **v1.1.0** - 增加 `allow_ai_autonomous` 配置，优化 AI 自主执行权限；添加提示词配置建议
-- v1.0.0 - 初始版本，支持基本群管功能
+<details>
+<summary>点击展开</summary>
+
+### v1.2.0（2026-07-31）
+- 新增：群公告（发布/读取/删除，编辑=读旧发新；删除依赖 NapCat `_del_group_notice`）、精华消息（设置/取消/列表）、专属头衔设置
+- 新增：加群申请处理——定时轮询（默认 10 分钟，零 LLM 消耗）+ 主动查询 + 审批工具 + 私聊请示主人（ask_master/auto/notify_only 三模式）
+- 新增：成员变动感知（退群/被踢注入对话环境）与新人入群欢迎（默认关）
+- 新增：`auto_check_admin` 启动自检 Bot 管理权限并日志提醒
+- 新增：与 group_member_viewer 插件共存（自动卸载重复查询工具，双向兼容）
+- 新增：成员查询结果展示专属头衔（`show_title_in_query` 开关）
+- 重构：统一 `_call_group_action` 操作管线；全部工具补 QQ 平台筛选与群聊检查
+- 配置：迁移为 section 分组（新键优先，旧平铺键兼容沿用并提醒迁移）
+
+### v1.1.0
+- 增加 `allow_ai_autonomous` 配置，优化 AI 自主执行权限；添加提示词配置建议
+
+### v1.0.0
+- 初始版本，支持基本群管功能
   - 6个核心功能：禁言、解除禁言、设置名片、撤回消息、查询成员
   - 2个可选功能：踢人、全员禁言
   - 完善的权限验证机制
+
+</details>
