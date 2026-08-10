@@ -196,7 +196,7 @@ class GroupManagerPlugin(BasePlugin):
         self._member_query_disabled = True
         for name in MEMBER_QUERY_TOOL_NAMES:
             try:
-                self.ctx.llm_api.unregister_tool(name)
+                self.ctx.tool_mgr.unregister_tool(name)
             except Exception as e:
                 logger.warning(f"[GroupManager] 卸载工具 {name} 失败: {e}")
         logger.info(f"[GroupManager] 成员查询工具已卸载（{reason or '外部请求'}），由 group_member_viewer 接管")

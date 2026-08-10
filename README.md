@@ -199,6 +199,9 @@ notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没
 <details>
 <summary>点击展开</summary>
 
+### v1.2.1（2026-08-10）
+- 修复：适配新版 KiraAI 工具注册机制，`ctx.llm_api.unregister_tool` 改为 `ctx.tool_mgr.unregister_tool`（`llm_api` 已废弃），修复与 group_member_viewer 共存时工具卸载失效问题
+
 ### v1.2.0（2026-07-31）
 - 新增：群公告（发布/读取/删除，编辑=读旧发新；删除依赖 NapCat `_del_group_notice`）、精华消息（设置/取消/列表）、专属头衔设置
 - 新增：加群申请处理——定时轮询（默认 10 分钟，零 LLM 消耗）+ 主动查询 + 审批工具 + 私聊请示主人（ask_master/auto/notify_only 三模式）
