@@ -56,8 +56,8 @@ CORE_ACTION_TOOLS_DESC = """
 """
 
 QUERY_TOOLS_DESC = """
-- group_get_member_list: 获取群成员列表（简要信息）
-- group_get_member_info: 获取指定成员详细信息。参数：user_id(QQ号)
+- group_get_member_list: 获取群成员列表（简要信息）。可选参数：keyword(搜索关键词，同时匹配 QQ号/QQ昵称/群名片/专属头衔，任一命中即列出)
+- group_get_member_info: 获取指定成员详细信息。参数：user_id(QQ号)；也可传 keyword(搜索关键词，同时匹配 QQ号/QQ昵称/群名片/专属头衔，唯一命中时直接返回详情，多个命中列出候选)
 """
 
 OPTIONAL_TOOLS_DESC = {
@@ -577,10 +577,15 @@ class GroupManagerPlugin(BasePlugin):
 
     @register.tool(
         name="group_get_member_list",
-        description="【仅QQ群】获取群成员列表（简要信息）",
-        params={"type": "object", "properties": {}}
+        description="【仅QQ群】获取群成员列表（简要信息）；提供 keyword 时按关键词筛选，同时匹配 QQ号、QQ昵称、群名片、专属头衔，任一字段命中都会列出",
+        params={
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "可选。搜索关键词：QQ号、QQ昵称、群名片或专属头衔（含其中一部分即可匹配）；不传则返回全量列表预览"}
+            }
+        }
     )
-    async def get_member_list(self, event: KiraMessageBatchEvent) -> str:
+    async def get_member_list(self, event: KiraMessageBatchEvent, keyword: str = "") -> str:
         group_id = event.session.session_id
         data, err, operator = await self._call_group_action(
             event, "get_group_member_list", {"group_id": group_id},
@@ -589,6 +594,22 @@ class GroupManagerPlugin(BasePlugin):
         if err:
             return err
         members = data or []
+        keyword = (keyword or "").strip()
+        if keyword:
+            kw = keyword.lower()
+            members = [
+                m for m in members
+                if kw in str(m.get("user_id", ""))
+                or kw in (m.get("nickname") or "").lower()
+                or kw in (m.get("card") or "").lower()
+                or kw in (m.get("title") or "").lower()
+            ]
+            if not members:
+                self._log_operation("查找群成员", operator, "", f"关键词「{keyword}」无匹配")
+                return (
+                    f"🔍 没有找到匹配「{keyword}」的成员（已同时检索 QQ号/QQ昵称/群名片/专属头衔）。\n"
+                    "提示：可以换关键词的一部分再试，或不传关键词查看全量列表。"
+                )
         total = len(members)
         member_preview = []
         for m in members[:10]:
@@ -603,22 +624,68 @@ class GroupManagerPlugin(BasePlugin):
             member_preview.append(display)
         preview_str = "\n".join(member_preview)
         more_str = f"\n... 等共 {total} 人" if total > 10 else ""
+        if keyword:
+            self._log_operation("查找群成员", operator, "", f"关键词「{keyword}」匹配{total}人")
+            return f"🔍 匹配「{keyword}」的成员（共{total}人）：\n{preview_str}{more_str}"
         self._log_operation("获取成员列表", operator, "", f"成功, 共{total}人")
         return f"📋 群成员列表（共{total}人）：\n{preview_str}{more_str}"
 
     @register.tool(
         name="group_get_member_info",
-        description="【仅QQ群】获取指定群成员的详细信息",
+        description="【仅QQ群】获取指定群成员的详细信息。可直接传 QQ号，也可传 keyword 关键词（同时匹配 QQ号/QQ昵称/群名片/专属头衔）：唯一命中时直接返回详情，多个命中时列出候选",
         params={
             "type": "object",
             "properties": {
-                "user_id": {"type": "string", "description": "要查询的QQ号"}
-            },
-            "required": ["user_id"]
+                "user_id": {"type": "string", "description": "要查询的QQ号"},
+                "keyword": {"type": "string", "description": "可选。搜索关键词：QQ号、QQ昵称、群名片或专属头衔（含其中一部分即可匹配）；唯一命中时直接查详情，多个命中时返回候选列表"}
+            }
         }
     )
-    async def get_member_info(self, event: KiraMessageBatchEvent, user_id: str) -> str:
+    async def get_member_info(self, event: KiraMessageBatchEvent, user_id: str = "", keyword: str = "") -> str:
         group_id = event.session.session_id
+        keyword = (keyword or "").strip()
+        user_id = (user_id or "").strip()
+        if keyword and not user_id:
+            # 关键词定位：四类字段 OR 匹配，唯一命中才查详情
+            list_data, lerr, operator = await self._call_group_action(
+                event, "get_group_member_list", {"group_id": group_id},
+                "查找群成员",
+            )
+            if lerr:
+                return lerr
+            kw = keyword.lower()
+            matched = [
+                m for m in (list_data or [])
+                if kw in str(m.get("user_id", ""))
+                or kw in (m.get("nickname") or "").lower()
+                or kw in (m.get("card") or "").lower()
+                or kw in (m.get("title") or "").lower()
+            ]
+            if not matched:
+                self._log_operation("查找群成员", operator, "", f"关键词「{keyword}」无匹配")
+                return (
+                    f"🔍 没有找到匹配「{keyword}」的成员（已同时检索 QQ号/QQ昵称/群名片/专属头衔）。\n"
+                    "提示：可以换关键词的一部分再试。"
+                )
+            if len(matched) > 1:
+                self._log_operation("查找群成员", operator, "", f"关键词「{keyword}」匹配{len(matched)}人，返回候选")
+                lines = [f"🔍「{keyword}」匹配到 {len(matched)} 位成员，请用 QQ号 指定要查询的对象："]
+                for m in matched[:10]:
+                    m_user_id = m.get("user_id", "")
+                    card = (m.get("card") or "").strip()
+                    nickname = (m.get("nickname") or "").strip()
+                    display = f"{card}({m_user_id})" if card else f"{nickname}({m_user_id})"
+                    if self.show_title_in_query:
+                        title = (m.get("title") or "").strip()
+                        if title:
+                            display += f" 🏷️{title}"
+                    lines.append(f"- {display}")
+                if len(matched) > 10:
+                    lines.append(f"... 仅显示前 10 条，请缩小关键词范围")
+                return "\n".join(lines)
+            user_id = str(matched[0].get("user_id", ""))
+        if not user_id:
+            return "❌ 请提供要查询的 QQ号（user_id）或搜索关键词（keyword）"
         data, err, operator = await self._call_group_action(
             event, "get_group_member_info",
             {"group_id": group_id, "user_id": user_id},
