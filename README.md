@@ -199,6 +199,13 @@ notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没
 <details>
 <summary>点击展开</summary>
 
+### v1.2.3（2026-09-20）
+- 修复：兼容 SnowLuma 等 OneBot 协议端对 get_group_system_msg 的返回格式——data 为数组（SnowLuma 风格）时不再抛 'list' object has no attribute 'get'（NapCat 为 dict + join_requests，两种格式均支持）
+- 修复：SnowLuma 下用 checked 布尔识别已处理的申请（NapCat 用 actor 字段），避免已审批申请重复提醒
+- 修复：group_list_essence 兼容段数组格式的 content（NapCat 与 SnowLuma 均返回 [{type:"text",data:{text:...}}] 段数组，原来按纯字符串处理会显示异常）
+- 改进：加群申请审批与展示优先使用协议端自带规范 flag（SnowLuma 的 slreq:1:...），NapCat 无此字段时回退 request_id
+
+- 更换：插件图标（128×128，全新女仆形象）
 ### v1.2.2（2026-08-22）
 - 新增：`group_get_member_list` 支持可选 `keyword` 参数，按关键词同时匹配 QQ号 / QQ昵称 / 群名片 / 专属头衔筛选成员，任一字段命中即列出；不传关键词时行为不变
 - 新增：`group_get_member_info` 支持 `keyword` 关键词定位——四类字段任一命中且唯一时直接返回详情，命中多个时列出候选成员（`user_id` 改为可选，与 `keyword` 二选一）

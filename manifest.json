@@ -1,7 +1,7 @@
 {
     "plugin_id": "group_manager",
     "display_name": "群聊管理插件",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "icon": "icon.png",
     "description": "提供群聊管理功能，包括禁言、踢人、设置名片、群公告、精华消息、专属头衔等（高危功能均为可选开关）",
     "author": "nyx+znq19",
