@@ -935,7 +935,19 @@ class GroupManagerPlugin(BasePlugin):
         for it in items:
             sender = it.get("sender_nick") or it.get("sender_id", "?")
             send_time = self._format_time(it.get("sender_time", 0))
-            content = (it.get("content") or "").strip()
+            content = it.get("content")
+            # NapCat / SnowLuma 都返回段数组 [{type:"text",data:{text:...}}, ...]
+            if isinstance(content, list):
+                parts = []
+                for seg in content:
+                    if not isinstance(seg, dict):
+                        continue
+                    if seg.get("type") == "text":
+                        parts.append(str((seg.get("data") or {}).get("text") or ""))
+                content = "".join(parts)
+            elif not isinstance(content, str):
+                content = ""
+            content = content.strip()
             if len(content) > 80:
                 content = content[:80] + "..."
             lines.append(f"- [{send_time}] {sender}: {content}")
@@ -1078,13 +1090,22 @@ class GroupManagerPlugin(BasePlugin):
             return None, str(e)
         if result.get("status") != "ok":
             return None, result.get("message", "未知错误")
-        data = result.get("data") or {}
-        join_reqs = data.get("join_requests") or []
+        data = result.get("data")
+        # NapCat：data 是 dict，申请在 data.join_requests 里（含 actor 字段）
+        # SnowLuma：data 直接就是申请数组（无 actor，用 checked 表示已处理）
+        if isinstance(data, dict):
+            join_reqs = data.get("join_requests") or []
+        elif isinstance(data, list):
+            join_reqs = data
+        else:
+            join_reqs = []
         pending = []
         for r in join_reqs:
-            # actor 非空表示已被其他管理员处理过
+            if not isinstance(r, dict):
+                continue
+            # NapCat 用 actor 非空表示已被其他管理员处理；SnowLuma 用 checked 布尔
             actor = r.get("actor")
-            if actor and str(actor) not in ("0", "None"):
+            if (actor and str(actor) not in ("0", "None")) or r.get("checked"):
                 continue
             if not r.get("request_id"):
                 continue
@@ -1103,7 +1124,9 @@ class GroupManagerPlugin(BasePlugin):
         uin = r.get("requester_uin", "?")
         nick = r.get("requester_nick", "")
         comment = (r.get("message") or "").strip() or "(无验证消息)"
-        flag = str(r.get("request_id"))
+        # SnowLuma 在申请对象里自带规范 flag（slreq:1:...），用它审批可免于
+        # 协议端按 request_id(sequence) 二次查找收件箱；NapCat 无此字段，回退 request_id
+        flag = str(r.get("flag") or r.get("request_id") or "")
 
         # 截断并明确标注申请人可控内容，防止通过昵称/验证消息注入指令
         nick_safe = str(nick)[:50]
@@ -1215,10 +1238,11 @@ class GroupManagerPlugin(BasePlugin):
         lines = [f"📋 待处理加群申请（共 {len(requests)} 条）："]
         for r in requests:
             comment = (r.get("message") or "").strip() or "(无验证消息)"
+            show_flag = str(r.get("flag") or r.get("request_id") or "")
             lines.append(
                 f"- 群{r.get('group_id')} | {r.get('requester_nick', '')}({r.get('requester_uin', '?')})\n"
                 f"  验证消息：{comment}\n"
-                f"  request_flag={r.get('request_id')}"
+                f"  request_flag={show_flag}"
             )
         lines.append("使用 group_handle_join_request 并传入对应 request_flag 来通过或拒绝。")
         return "\n".join(lines)
