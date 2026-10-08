@@ -24,6 +24,7 @@ from core.prompt_manager import Prompt
 import asyncio
 import json
 import os
+import re
 import time
 
 
@@ -78,6 +79,11 @@ JOIN_MODE_RULES = {
 
 # 成员查询工具名（供共存卸载使用）
 MEMBER_QUERY_TOOL_NAMES = ("group_get_member_list", "group_get_member_info")
+
+# 协议端「不认识的 action」报错措辞（用于删公告双名兜底判定；
+# 只在命中这类错误时才换名重试，权限不足等真实失败不触发第二次调用）
+_UNKNOWN_ACTION_RE = re.compile(
+    r"unknown|不支持|not.?support|invalid action|未实现|不存在|no such", re.I)
 
 
 class GroupManagerPlugin(BasePlugin):
@@ -849,11 +855,18 @@ class GroupManagerPlugin(BasePlugin):
         if not self.enable_notice:
             return "❌ 群公告功能未启用，请在插件配置中开启"
         group_id = event.session.session_id
+        params = {"group_id": group_id, "notice_id": notice_id}
         _, err, operator = await self._call_group_action(
-            event, "_del_group_notice",
-            {"group_id": group_id, "notice_id": notice_id},
-            "删除群公告",
+            event, "_del_group_notice", params, "删除群公告",
         )
+        # 三端接口名不一致：NapCat/SnowLuma 为 _del_group_notice，
+        # LLOneBot 为 _delete_group_notice。仅在报错为「未知 action」时换名重试，
+        # 权限不足等真实失败不触发第二次调用。
+        if err and _UNKNOWN_ACTION_RE.search(err):
+            logger.info("[GroupManager] _del_group_notice 不可用，改用 _delete_group_notice 重试")
+            _, err, operator = await self._call_group_action(
+                event, "_delete_group_notice", params, "删除群公告",
+            )
         if err:
             return err
         self._log_operation("删除群公告", operator, "", f"成功, notice_id: {notice_id}")
@@ -908,7 +921,7 @@ class GroupManagerPlugin(BasePlugin):
 
     @register.tool(
         name="group_list_essence",
-        description="【仅QQ群】查看群精华消息列表（需在配置中启用）",
+        description="【仅QQ群】查看群精华消息列表（需在配置中启用）。输出含 message_id，可用于 group_unset_essence",
         params={
             "type": "object",
             "properties": {
@@ -926,35 +939,150 @@ class GroupManagerPlugin(BasePlugin):
         )
         if err:
             return err
+        # 防御：协议端异常时 data 可能不是数组（如 dict），宁可报错也不崩
+        if data is not None and not isinstance(data, list):
+            self._log_operation("获取精华列表", operator, "",
+                                f"返回格式异常: {type(data).__name__}")
+            return f"❌ 协议端返回的精华列表格式异常（期望数组，实际 {type(data).__name__}）"
         items = data or []
         if not items:
             return "📋 本群暂无精华消息"
         total = len(items)
         items = items[:max(1, count)]
+
+        parsed = [self._parse_essence_item(it) for it in items if isinstance(it, dict)]
+
+        # 正文缺失但有 message_id 的条目（典型：LLOneBot 不返回 content），
+        # 并发用 get_msg 反查；单条失败不影响其它条目（return_exceptions）
+        client = self._get_qq_client(event)
+        need_fetch = [(i, p["message_id"]) for i, p in enumerate(parsed)
+                      if not p["text"] and p["message_id"] is not None and client]
+        if need_fetch:
+            results = await asyncio.gather(
+                *(self._fetch_msg_text(client, mid) for _, mid in need_fetch),
+                return_exceptions=True)
+            for (i, _), res in zip(need_fetch, results):
+                if isinstance(res, Exception):
+                    continue
+                text, ts = res
+                if text:
+                    parsed[i]["text"] = text
+                if ts and not parsed[i]["time"]:
+                    parsed[i]["time"] = ts
+
         lines = [f"📋 群精华消息（共 {total} 条）："]
-        for it in items:
-            sender = it.get("sender_nick") or it.get("sender_id", "?")
-            send_time = self._format_time(it.get("sender_time", 0))
-            content = it.get("content")
-            # NapCat / SnowLuma 都返回段数组 [{type:"text",data:{text:...}}, ...]
-            if isinstance(content, list):
-                parts = []
-                for seg in content:
-                    if not isinstance(seg, dict):
-                        continue
-                    if seg.get("type") == "text":
-                        parts.append(str((seg.get("data") or {}).get("text") or ""))
-                content = "".join(parts)
-            elif not isinstance(content, str):
-                content = ""
-            content = content.strip()
-            if len(content) > 80:
-                content = content[:80] + "..."
-            lines.append(f"- [{send_time}] {sender}: {content}")
+        for p in parsed:
+            send_time = self._format_time(p["time"] or p["op_time"])
+            text = p["text"] or "[内容不可用]"
+            if len(text) > 80:
+                text = text[:80] + "..."
+            if p["message_id"] is not None:
+                id_str = f"id={p['message_id']}"
+            else:
+                id_str = "id=不可用(协议端未提供)"
+            op_str = f" ｜ {p['operator']}设置" if p["operator"] else ""
+            lines.append(f"- [{send_time}] {p['sender']}: {text} ｜ {id_str}{op_str}")
         if total > len(items):
             lines.append(f"... 仅显示前 {len(items)} 条")
         self._log_operation("获取精华列表", operator, "", f"成功, 共{total}条")
         return "\n".join(lines)
+
+    # 非文本段占位符（精华/消息反查共用，不再静默丢弃）
+    _SEGMENT_PLACEHOLDERS = {
+        "image": "[图片]", "face": "[表情]", "record": "[语音]", "video": "[视频]",
+        "file": "[文件]", "reply": "[回复]", "json": "[卡片]", "xml": "[卡片]",
+        "forward": "[转发消息]", "music": "[音乐]", "share": "[分享]",
+        "location": "[位置]", "poke": "[戳一戳]", "dice": "[骰子]", "rps": "[猜拳]",
+        "contact": "[名片]", "gift": "[礼物]", "redbag": "[红包]",
+    }
+
+    @classmethod
+    def _segments_to_text(cls, segments) -> str:
+        """OneBot 段数组 → 纯文本（text 段拼接，非文本段渲染占位符）"""
+        parts = []
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            t = seg.get("type")
+            if t == "text":
+                parts.append(str((seg.get("data") or {}).get("text") or ""))
+            elif t == "at":
+                parts.append(f"[@{(seg.get('data') or {}).get('qq', '')}]")
+            elif t in cls._SEGMENT_PLACEHOLDERS:
+                parts.append(cls._SEGMENT_PLACEHOLDERS[t])
+            elif t:
+                parts.append(f"[{t}]")
+        return "".join(parts)
+
+    @staticmethod
+    def _web_msg_content_to_text(msg_content) -> str:
+        """QQ web 接口原始 msg_content（旧版 SnowLuma 透传格式）→ 纯文本。
+        msg_type: 1=text 2=face 3=image 4=file，其余（分享卡片等）尽量取可读文本。"""
+        parts = []
+        for c in msg_content:
+            if not isinstance(c, dict):
+                continue
+            mt = c.get("msg_type")
+            if mt == 1:
+                parts.append(str(c.get("text") or ""))
+            elif mt == 2:
+                parts.append("[表情]")
+            elif mt == 3:
+                parts.append("[图片]")
+            elif mt == 4:
+                parts.append(f"[文件{(' ' + str(c['file_name'])) if c.get('file_name') else ''}]")
+            else:
+                txt = (c.get("share_brief") or c.get("share_title")
+                       or c.get("share_summary") or c.get("text"))
+                parts.append(str(txt) if txt else f"[消息类型{mt}]")
+        return "".join(parts)
+
+    def _parse_essence_item(self, it: dict) -> dict:
+        """精华条目归一化。兼容四种返回形态：
+        - NapCat / 新版 SnowLuma：content 段数组（OneBot 标准字段名）
+        - LLOneBot：只有元数据，无 content（靠 get_msg 反查）
+        - 旧版 SnowLuma：透传 QQ web 原始格式（msg_content / sender_uin /
+          add_digest_*，且无 message_id）
+        - 防御：content 为字符串
+        """
+        content = it.get("content")
+        text = ""
+        if isinstance(content, list):
+            text = self._segments_to_text(content)
+        elif isinstance(content, str):
+            text = content
+        if not text:
+            web_content = it.get("msg_content")
+            if isinstance(web_content, list):
+                text = self._web_msg_content_to_text(web_content)
+        return {
+            "sender": str(it.get("sender_nick") or it.get("sender_id")
+                          or it.get("sender_uin") or "?"),
+            "time": it.get("sender_time") or 0,
+            "operator": str(it.get("operator_nick") or it.get("add_digest_nick") or ""),
+            "op_time": it.get("operator_time") or it.get("add_digest_time") or 0,
+            "message_id": it.get("message_id"),
+            "text": text.strip(),
+        }
+
+    @staticmethod
+    async def _fetch_msg_text(client, message_id):
+        """get_msg 反查正文，返回 (text, time)；任何失败返回 ("", 0)，绝不抛出"""
+        try:
+            r = await client.send_action("get_msg", {"message_id": message_id})
+            if r.get("status") != "ok":
+                return "", 0
+            d = r.get("data") or {}
+            msg = d.get("message")
+            if isinstance(msg, list):
+                text = GroupManagerPlugin._segments_to_text(msg)
+            elif isinstance(msg, str):
+                text = msg
+            else:
+                text = ""
+            return text.strip(), d.get("time") or 0
+        except Exception:
+            return "", 0
 
     # ============ 可选工具：专属头衔 ============
 
@@ -1002,7 +1130,9 @@ class GroupManagerPlugin(BasePlugin):
                     self._seen_flags = {str(x): None for x in data}
         except Exception as e:
             logger.warning(f"[GroupManager] 加载加群申请去重记录失败: {e}")
-            self._seen_flags = set()
+            # 必须是 dict —— 写成 set 会让后续 _seen_flags[key] = None 抛
+            # TypeError，加群申请轮询永久报错
+            self._seen_flags = {}
 
     def _save_seen_flags(self):
         try:

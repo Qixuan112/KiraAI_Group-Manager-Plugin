@@ -199,6 +199,17 @@ notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没
 <details>
 <summary>点击展开</summary>
 
+### v1.2.4（2026-10-08）
+- 修复：`group_list_essence` 正文为空——各协议端精华列表返回形态不一，现全部兼容：
+  - NapCat / 新版 SnowLuma：`content` 段数组（原有支持，非文本段不再静默丢弃，渲染为 `[图片]`/`[表情]` 等占位符）
+  - 旧版 SnowLuma（2026-07-31 之前的构建）：透传 QQ web 原始格式 `msg_content`（`msg_type` 1=文本/2=表情/3=图片/4=文件），现正确解析正文
+  - LLOneBot：只返回元数据、无 `content`，现自动用 `get_msg` 按 message_id 反查正文（并发、单条失败不影响整列表）
+  - 以上都拿不到时诚实显示 `[内容不可用]`，不再留空白
+- 修复：NapCat 精华条目无 `sender_time` 时，时间回退使用 `get_msg.time` / `operator_time`，不再显示 N/A
+- 改进：精华列表输出补充 `message_id`（`group_unset_essence` 可直接使用）与设置人；旧版 SnowLuma 不提供 id 时明确标注
+- 修复：`group_delete_notice` 在 LLOneBot 上必失败——其接口名为 `_delete_group_notice`（NapCat/SnowLuma 为 `_del_group_notice`），现仅在报错为「未知 action」时自动换名重试
+- 修复：加群申请去重记录文件损坏后，轮询因类型错误永久报错（兜底误用 `set()`，应为 `dict`）
+- 已知限制（协议端行为，插件无法补救）：LLOneBot 对本地消息库已消失的老精华**整条不列出**；旧版 SnowLuma 不提供 message_id，该环境下无法通过工具取消精华（可在 QQ 客户端手动操作）
 ### v1.2.3（2026-09-20）
 - 修复：兼容 SnowLuma 等 OneBot 协议端对 get_group_system_msg 的返回格式——data 为数组（SnowLuma 风格）时不再抛 'list' object has no attribute 'get'（NapCat 为 dict + join_requests，两种格式均支持）
 - 修复：SnowLuma 下用 checked 布尔识别已处理的申请（NapCat 用 actor 字段），避免已审批申请重复提醒
