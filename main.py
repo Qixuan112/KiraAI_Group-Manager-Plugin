@@ -1339,7 +1339,7 @@ class GroupManagerPlugin(BasePlugin):
                 session_type="gm",
                 session_id=group_id,
             )
-            await self.ctx.message_processor.handle_im_message(event)
+            await self.ctx.event_bus.publish(event)
             return True
         except Exception as e:
             logger.error(f"[GroupManager] 分发加群申请事件失败: {e}")

@@ -205,6 +205,10 @@ notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没
 <details>
 <summary>点击展开</summary>
 
+### v1.2.6
+
+  - 兼容 KiraAI 3.0 GA 弃用面：合成事件发布 `ctx.message_processor.handle_im_message` → `ctx.event_bus.publish`（两代事件总线均接线到处理管线）。test_compat 32 条全绿。
+
 ### v1.2.5（2026-10-12）
 - 3.0 兼容：加群申请事件构造双世代化——`supported_elements`/`message_types` 按构造签名实测分流；元素清单优先 IMCapability 元数据、回退旧属性，不再刷 deprecated 告警；2.x 行为不变。
 
