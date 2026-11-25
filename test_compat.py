@@ -351,5 +351,28 @@ except TypeError:
     check("F2 兜底后可正常赋值（旧 set() 会抛 TypeError）", False)
 check("F3 源码不再出现 set() 兜底", "self._seen_flags = set()" not in SRC)
 
+print("== G. 禁言状态判定（shut_up_timestamp 是截止时间，不是布尔值）==")
+
+import time as _time_mod
+ns_g = {"time": _time_mod}
+for fname in ("_normalize_ts", "_mute_expiry"):
+    _code = extract_func(fname)
+    exec(compile(ast.Module(body=[ast.parse(_code).body[0]], type_ignores=[]),
+                 "<g>", "exec"), ns_g)
+_normalize_ts = ns_g["_normalize_ts"]
+_mute_expiry = ns_g["_mute_expiry"]
+NOW = 1_764_000_000
+
+check("G1 0 = 未禁言", _mute_expiry(0, NOW) == 0)
+check("G2 缺失 = 未禁言", _mute_expiry(None, NOW) == 0)
+check("G3 过去的到期时间 = 已解除（旧代码会误报）", _mute_expiry(NOW - 3600, NOW) == 0)
+check("G4 未来 = 禁言中", _mute_expiry(NOW + 600, NOW) == NOW + 600)
+check("G5 字符串时间戳", _mute_expiry(str(NOW + 600), NOW) == NOW + 600)
+check("G6 毫秒时间戳归一化", _mute_expiry((NOW + 600) * 1000, NOW) == NOW + 600)
+check("G7 脏数据 = 未禁言", _mute_expiry("abc", NOW) == 0)
+check("G8 _normalize_ts 毫秒转秒", _normalize_ts(NOW * 1000) == NOW)
+check("G9 源码不再用 shut_up_timestamp > 0 判断",
+      "shut_up_timestamp > 0" not in SRC)
+
 print(f"\n{'='*46}\n通过 {PASS} 条" + (f"，失败 {len(FAIL)} 条: {FAIL}" if FAIL else "，全部绿 ✓"))
 sys.exit(1 if FAIL else 0)

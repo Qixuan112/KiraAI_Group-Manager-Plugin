@@ -205,6 +205,11 @@ notify_only 直接私聊主人。用户也可以随时自然语言问 Bot"有没
 <details>
 <summary>点击展开</summary>
 
+### v1.2.7（2026-11-25）
+- 修复：成员信息误报「⛔ 当前处于禁言状态」。`shut_up_timestamp` 是**禁言截止时间戳**，旧代码只判断 `> 0`；
+  禁言到期后协议端仍会保留过去的到期时间，导致一直显示禁言中。现在与当前时间比较，并在禁言时显示到期时间。
+- 顺带：`_format_time` 兼容毫秒时间戳（不会再显示成 5 万多年）；`test_compat` 新增 G 组 9 条禁言判定回归。
+
 ### v1.2.6
 
   - 兼容 KiraAI 3.0 GA 弃用面：合成事件发布 `ctx.message_processor.handle_im_message` → `ctx.event_bus.publish`（两代事件总线均接线到处理管线）。test_compat 32 条全绿。
