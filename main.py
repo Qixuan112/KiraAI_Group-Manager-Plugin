@@ -87,6 +87,37 @@ _UNKNOWN_ACTION_RE = re.compile(
     r"unknown|不支持|not.?support|invalid action|未实现|不存在|no such", re.I)
 
 
+def _normalize_ts(value) -> int:
+    """把时间戳归一化为秒（兼容毫秒/字符串/None）。
+
+    OneBot 各协议端的时间字段基本都是秒，但个别实现会给毫秒；
+    统一在这里兜底，避免 5 万多年的显示。
+    """
+    try:
+        ts = int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+    if ts > 10 ** 12:  # 毫秒
+        ts //= 1000
+    return ts
+
+
+def _mute_expiry(shut_up_timestamp, now=None) -> int:
+    """返回仍然有效的禁言截止时间戳（秒）；未禁言返回 0。
+
+    `shut_up_timestamp` 是**禁言截止时间**，不是"是否禁言"的布尔值：
+      · 0 / 缺失 → 未禁言
+      · 过去的时间戳 → 禁言已到期（协议端仍会保留上一次的到期时间）
+      · 未来的时间戳 → 当前禁言中
+    LLOneBot 的接口测试也明确：禁言时 > now，解除后为 0 或 <= now。
+    """
+    ts = _normalize_ts(shut_up_timestamp)
+    if ts <= 0:
+        return 0
+    cur = time.time() if now is None else now
+    return ts if ts > cur else 0
+
+
 class GroupManagerPlugin(BasePlugin):
     """
     群聊管理插件主类
@@ -688,7 +719,7 @@ class GroupManagerPlugin(BasePlugin):
                             display += f" 🏷️{title}"
                     lines.append(f"- {display}")
                 if len(matched) > 10:
-                    lines.append(f"... 仅显示前 10 条，请缩小关键词范围")
+                    lines.append("... 仅显示前 10 条，请缩小关键词范围")
                 return "\n".join(lines)
             user_id = str(matched[0].get("user_id", ""))
         if not user_id:
@@ -714,9 +745,11 @@ class GroupManagerPlugin(BasePlugin):
         role = data.get('role', 'member')
         role_map = {'owner': '群主', 'admin': '管理员', 'member': '普通成员'}
         info_lines.append(f"身份: {role_map.get(role, role)}")
-        shut_up_timestamp = data.get('shut_up_timestamp', 0)
-        if shut_up_timestamp > 0:
-            info_lines.append("⛔ 当前处于禁言状态")
+        # shut_up_timestamp 是"禁言截止时间"，必须与当前时间比较；
+        # 旧代码只判断 > 0，禁言到期后仍会显示"禁言中"（实机 2026-11-25 13:35）
+        expiry = _mute_expiry(data.get('shut_up_timestamp'))
+        if expiry:
+            info_lines.append(f"⛔ 当前处于禁言状态（至 {self._format_time(expiry)}）")
         self._log_operation("获取成员信息", operator, user_id, "成功")
         return "\n".join(info_lines)
 
@@ -1479,6 +1512,7 @@ class GroupManagerPlugin(BasePlugin):
 
     @staticmethod
     def _format_time(timestamp: int) -> str:
+        timestamp = _normalize_ts(timestamp)
         if not timestamp:
             return "N/A"
         try:
